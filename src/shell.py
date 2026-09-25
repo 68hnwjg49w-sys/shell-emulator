@@ -1,38 +1,12 @@
-"""Ядро эмулятора командной оболочки.
+"""Ядро эмулятора: разбор строки и выполнение команд без привязки к GUI."""
 
-Модуль не зависит от способа ввода-вывода: он принимает строку
-и возвращает текст ответа. Благодаря этому ядро можно покрыть
-модульными тестами без запуска графического интерфейса.
-"""
+from src.errors import CommandError, ParseError
 
 QUOTE_CHAR = '"'
 
 
-class ParseError(Exception):
-    """Ошибка разбора строки ввода."""
-
-
-class CommandError(Exception):
-    """Ошибка выполнения команды."""
-
-
 def tokenize(line):
-    """Разбивает строку ввода на команду и аргументы.
-
-    Двойные кавычки группируют текст: пробелы внутри кавычек не
-    разделяют слова. Сами кавычки являются управляющими символами
-    и в результат не попадают.
-
-    Args:
-        line: строка, введённая пользователем.
-
-    Returns:
-        Список токенов. Первый элемент — имя команды, остальные —
-        её аргументы. Для пустой строки возвращается пустой список.
-
-    Raises:
-        ParseError: если кавычка открыта, но не закрыта.
-    """
+    """Разбивает строку на команду и аргументы с учётом кавычек."""
     tokens = []
     current = []
     has_token = False
@@ -61,75 +35,67 @@ def tokenize(line):
 class Shell:
     """Ядро эмулятора: хранит состояние и выполняет команды."""
 
-    def __init__(self, vfs_name):
-        """Создаёт ядро эмулятора.
-
-        Args:
-            vfs_name: имя виртуальной файловой системы.
-        """
-        self.vfs_name = vfs_name
+    def __init__(self, config, logger=None):
+        """Создаёт ядро с параметрами запуска и необязательным журналом."""
+        self.config = config
+        self.vfs_name = config.vfs_name
         self.running = True
+        self._logger = logger
         self._commands = {
             "ls": self._stub,
             "cd": self._stub,
             "exit": self._exit,
+            "conf-dump": self._conf_dump,
         }
 
     def execute(self, line):
-        """Выполняет одну строку ввода.
-
-        Args:
-            line: строка, введённая пользователем.
-
-        Returns:
-            Текст ответа эмулятора. Пустая строка, если вводить
-            было нечего.
-
-        Raises:
-            ParseError: если строка разобрана некорректно.
-            CommandError: если команда неизвестна или вызвана неверно.
-        """
-        tokens = tokenize(line)
-        if not tokens:
+        """Выполняет строку, пишет событие в журнал и возвращает ответ."""
+        if not line.strip():
             return ""
+        tokens = []
+        try:
+            tokens = tokenize(line)
+            answer = self._dispatch(tokens)
+        except (ParseError, CommandError) as error:
+            self._record(line, tokens, str(error))
+            raise
+        self._record(line, tokens, None)
+        return answer
 
+    def _dispatch(self, tokens):
+        """Находит обработчик команды и вызывает его."""
         name = tokens[0]
-        args = tokens[1:]
         handler = self._commands.get(name)
         if handler is None:
             raise CommandError("{}: команда не найдена".format(name))
-        return handler(name, args)
+        return handler(name, tokens[1:])
+
+    def _record(self, line, tokens, error):
+        """Передаёт событие в журнал, если он ведётся."""
+        if self._logger is not None:
+            self._logger.record(line, tokens, error)
 
     @staticmethod
     def _stub(name, args):
-        """Заглушка команды: выводит своё имя и аргументы.
-
-        Args:
-            name: имя вызванной команды.
-            args: список её аргументов.
-
-        Returns:
-            Строку с именем команды и перечнем аргументов.
-        """
+        """Заглушка команды: возвращает своё имя и аргументы."""
         if not args:
             return "{}: аргументов нет".format(name)
         listed = ", ".join(repr(arg) for arg in args)
         return "{}: аргументы: {}".format(name, listed)
 
     def _exit(self, name, args):
-        """Завершает работу эмулятора.
-
-        Args:
-            name: имя вызванной команды.
-            args: список её аргументов; должен быть пустым.
-
-        Returns:
-            Прощальное сообщение.
-
-        Raises:
-            CommandError: если команде переданы аргументы.
-        """
-        if args:
-            raise CommandError("{}: аргументы не поддерживаются".format(name))
+        """Завершает работу эмулятора."""
+        _require_no_args(name, args)
         self.running = False
         return "Завершение работы эмулятора."
+
+    def _conf_dump(self, name, args):
+        """Возвращает параметры эмулятора в формате «ключ = значение»."""
+        _require_no_args(name, args)
+        return self.config.dump()
+
+
+def _require_no_args(name, args):
+    """Бросает CommandError, если команде переданы аргументы."""
+    if args:
+        raise CommandError("{}: аргументы не поддерживаются".format(name))

@@ -1,43 +1,47 @@
 """Точка входа эмулятора командной оболочки."""
 
-import argparse
+import sys
 
+from src.config import parse_arguments, read_script
+from src.errors import ConfigError
 from src.gui import ShellWindow
+from src.logger import XmlLogger
 from src.shell import Shell
 
-DEFAULT_VFS_NAME = "vfs"
+EXIT_OK = 0
+EXIT_CONFIG_ERROR = 1
+DEBUG_PREFIX = "[debug] "
 
 
-def parse_arguments(argv=None):
-    """Разбирает параметры командной строки.
+def print_debug(config):
+    """Выводит в терминал все параметры запуска эмулятора."""
+    print(DEBUG_PREFIX + "параметры запуска эмулятора:")
+    for line in config.dump().splitlines():
+        print(DEBUG_PREFIX + "  " + line)
 
-    Args:
-        argv: список аргументов; по умолчанию берётся из sys.argv.
 
-    Returns:
-        Пространство имён с разобранными параметрами.
-    """
-    parser = argparse.ArgumentParser(
-        description="Эмулятор командной оболочки UNIX-подобной ОС.",
-    )
-    parser.add_argument(
-        "--vfs-name",
-        default=DEFAULT_VFS_NAME,
-        help="имя VFS, отображаемое в заголовке окна",
-    )
-    return parser.parse_args(argv)
+def prepare(config):
+    """Читает стартовый скрипт и открывает журнал, если они заданы."""
+    script = read_script(config.script_path) if config.script_path else []
+    logger = XmlLogger(config.log_path) if config.log_path else None
+    return script, logger
 
 
 def main(argv=None):
-    """Собирает ядро и интерфейс и запускает эмулятор.
+    """Запускает эмулятор и возвращает код завершения процесса."""
+    try:
+        config = parse_arguments(argv)
+        print_debug(config)
+        script, logger = prepare(config)
+    except ConfigError as error:
+        print("ошибка запуска: {}".format(error), file=sys.stderr)
+        return EXIT_CONFIG_ERROR
 
-    Args:
-        argv: список аргументов командной строки.
-    """
-    arguments = parse_arguments(argv)
-    shell = Shell(arguments.vfs_name)
-    ShellWindow(shell).start()
+    window = ShellWindow(Shell(config, logger))
+    window.run_script(script)
+    window.start()
+    return EXIT_OK
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())

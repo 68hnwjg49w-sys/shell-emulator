@@ -2,9 +2,24 @@
 
 import unittest
 
-from src.shell import CommandError, ParseError, Shell, tokenize
+from src.config import Config
+from src.errors import CommandError, ParseError
+from src.shell import Shell, tokenize
 
+VFS_PATH = "images/testvfs.zip"
 VFS_NAME = "testvfs"
+
+
+class FakeLogger:
+    """Журнал-заглушка, запоминающий события в памяти."""
+
+    def __init__(self):
+        """Создаёт пустой список событий."""
+        self.events = []
+
+    def record(self, line, tokens, error=None):
+        """Запоминает событие."""
+        self.events.append((line, list(tokens), error))
 
 
 class TokenizeTest(unittest.TestCase):
@@ -53,10 +68,11 @@ class ShellTest(unittest.TestCase):
 
     def setUp(self):
         """Создаёт новое ядро перед каждым тестом."""
-        self.shell = Shell(VFS_NAME)
+        self.config = Config(vfs_path=VFS_PATH)
+        self.shell = Shell(self.config)
 
-    def test_vfs_name_is_stored(self):
-        """Ядро запоминает имя VFS."""
+    def test_vfs_name_from_path(self):
+        """Имя VFS берётся из имени файла без расширения."""
         self.assertEqual(self.shell.vfs_name, VFS_NAME)
 
     def test_blank_line_gives_no_answer(self):
@@ -86,6 +102,50 @@ class ShellTest(unittest.TestCase):
         """Команда exit не принимает аргументов."""
         with self.assertRaises(CommandError):
             self.shell.execute("exit now")
+        self.assertTrue(self.shell.running)
+
+    def test_conf_dump(self):
+        """Команда conf-dump выводит параметры в формате ключ-значение."""
+        self.assertEqual(self.shell.execute("conf-dump"), self.config.dump())
+
+    def test_conf_dump_rejects_arguments(self):
+        """Команда conf-dump не принимает аргументов."""
+        with self.assertRaises(CommandError):
+            self.shell.execute("conf-dump extra")
+
+
+class ShellLoggingTest(unittest.TestCase):
+    """Проверяет передачу событий в журнал."""
+
+    def setUp(self):
+        """Создаёт ядро с журналом-заглушкой."""
+        self.logger = FakeLogger()
+        self.shell = Shell(Config(), self.logger)
+
+    def test_successful_call_is_logged(self):
+        """Успешный вызов записывается без ошибки."""
+        self.shell.execute('ls "a b"')
+        expected = [('ls "a b"', ["ls", "a b"], None)]
+        self.assertEqual(self.logger.events, expected)
+
+    def test_failed_command_is_logged(self):
+        """Вызов неизвестной команды записывается с текстом ошибки."""
+        with self.assertRaises(CommandError):
+            self.shell.execute("wat 1")
+        line, tokens, error = self.logger.events[0]
+        self.assertEqual((line, tokens), ("wat 1", ["wat", "1"]))
+        self.assertIn("не найдена", error)
+
+    def test_parse_error_is_logged(self):
+        """Ошибка разбора записывается без токенов."""
+        with self.assertRaises(ParseError):
+            self.shell.execute('cd "x')
+        self.assertEqual(self.logger.events[0][1], [])
+
+    def test_blank_line_is_not_logged(self):
+        """Пустой ввод не является вызовом команды."""
+        self.shell.execute("  ")
+        self.assertEqual(self.logger.events, [])
 
 
 if __name__ == "__main__":

@@ -1,17 +1,14 @@
-"""Графический интерфейс эмулятора на библиотеке Tkinter.
-
-Модуль отвечает только за ввод и вывод. Вся логика обработки
-команд находится в модуле :mod:`src.shell`.
-"""
+"""Графический интерфейс эмулятора на Tkinter: только ввод и вывод."""
 
 import tkinter as tk
 from tkinter import scrolledtext
 
-from src.shell import CommandError, ParseError
+from src.errors import EmulatorError
 
 WINDOW_WIDTH = 900
 WINDOW_HEIGHT = 560
 OUTPUT_HEIGHT = 24
+PADDING = 8
 PROMPT_SUFFIX = "$ "
 
 
@@ -19,11 +16,7 @@ class ShellWindow:
     """Окно эмулятора: область вывода и строка ввода."""
 
     def __init__(self, shell):
-        """Создаёт окно и связывает его с ядром эмулятора.
-
-        Args:
-            shell: экземпляр :class:`src.shell.Shell`.
-        """
+        """Создаёт окно и связывает его с ядром эмулятора."""
         self._shell = shell
         self._root = tk.Tk()
         self._root.title("Эмулятор — VFS: {}".format(shell.vfs_name))
@@ -32,31 +25,25 @@ class ShellWindow:
         self._entry = self._build_entry()
 
     def _build_output(self):
-        """Создаёт область вывода.
-
-        Returns:
-            Виджет прокручиваемого текстового поля.
-        """
+        """Создаёт прокручиваемую область вывода."""
         output = scrolledtext.ScrolledText(
             self._root,
             height=OUTPUT_HEIGHT,
             state=tk.DISABLED,
             wrap=tk.WORD,
         )
-        output.pack(fill=tk.BOTH, expand=True, padx=8, pady=(8, 4))
+        output.pack(
+            fill=tk.BOTH, expand=True,
+            padx=PADDING, pady=(PADDING, PADDING // 2),
+        )
         return output
 
     def _build_entry(self):
-        """Создаёт строку ввода с приглашением.
-
-        Returns:
-            Виджет однострочного поля ввода.
-        """
+        """Создаёт строку ввода с приглашением."""
         frame = tk.Frame(self._root)
-        frame.pack(fill=tk.X, padx=8, pady=(0, 8))
+        frame.pack(fill=tk.X, padx=PADDING, pady=(0, PADDING))
 
-        prompt = self._shell.vfs_name + PROMPT_SUFFIX
-        tk.Label(frame, text=prompt).pack(side=tk.LEFT)
+        tk.Label(frame, text=self._prompt()).pack(side=tk.LEFT)
 
         entry = tk.Entry(frame)
         entry.pack(side=tk.LEFT, fill=tk.X, expand=True)
@@ -64,12 +51,12 @@ class ShellWindow:
         entry.focus_set()
         return entry
 
-    def _on_submit(self, event):
-        """Обрабатывает нажатие Enter в строке ввода.
+    def _prompt(self):
+        """Возвращает текст приглашения к вводу."""
+        return self._shell.vfs_name + PROMPT_SUFFIX
 
-        Args:
-            event: событие Tkinter; не используется.
-        """
+    def _on_submit(self, event):
+        """Обрабатывает нажатие Enter в строке ввода."""
         del event
         line = self._entry.get()
         self._entry.delete(0, tk.END)
@@ -78,28 +65,29 @@ class ShellWindow:
     def run_line(self, line):
         """Выполняет строку и выводит приглашение, ввод и ответ.
 
-        Args:
-            line: строка, введённая пользователем или взятая
-                из стартового скрипта.
+        Ошибки ввода выводятся в окно и не прерывают работу.
         """
-        prompt = self._shell.vfs_name + PROMPT_SUFFIX
-        self._write(prompt + line)
+        self._write(self._prompt() + line)
         try:
             answer = self._shell.execute(line)
-        except (ParseError, CommandError) as error:
+        except EmulatorError as error:
             self._write("ошибка: {}".format(error))
             return
         if answer:
             self._write(answer)
         if not self._shell.running:
+            self._entry.configure(state=tk.DISABLED)
             self._root.after_idle(self._root.destroy)
 
-    def _write(self, text):
-        """Добавляет строку в область вывода.
+    def run_script(self, lines):
+        """Выполняет команды стартового скрипта до конца или до exit."""
+        for line in lines:
+            if not self._shell.running:
+                return
+            self.run_line(line)
 
-        Args:
-            text: текст без завершающего перевода строки.
-        """
+    def _write(self, text):
+        """Добавляет строку текста в область вывода."""
         self._output.configure(state=tk.NORMAL)
         self._output.insert(tk.END, text + "\n")
         self._output.see(tk.END)
